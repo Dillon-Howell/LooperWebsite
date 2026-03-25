@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import StripeAccent from '../components/StripeAccent';
 import ScrollReveal from '../components/ScrollReveal';
 import looperIcon from '../assets/looper-icon.png';
+import { usePageMeta } from '../hooks/usePageMeta';
 
 const features = [
   {
@@ -43,6 +44,10 @@ const features = [
 ];
 
 export default function LooperPage() {
+  usePageMeta({
+    title: 'Looper — ArchaldStudio',
+    description: 'Looper is a full-featured guitar looper app for iOS and Android. Record multiple tracks, add effects, and build songs layer by layer.',
+  });
   return (
     <div>
       {/* Hero */}

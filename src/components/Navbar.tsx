@@ -46,10 +46,7 @@ export default function Navbar() {
                 <Link
                   to={path}
                   onClick={() => setMenuOpen(false)}
-                  className="navbar-link"
-                  style={{
-                    color: location.pathname === path ? 'var(--accent-green)' : 'var(--text-muted)',
-                  }}
+                  className={`navbar-link${location.pathname === path ? ' navbar-link--active' : ''}`}
                 >
                   {label}
                 </Link>

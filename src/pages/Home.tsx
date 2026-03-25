@@ -3,6 +3,7 @@ import HeroScene from '../components/HeroScene';
 import StripeAccent from '../components/StripeAccent';
 import ScrollReveal from '../components/ScrollReveal';
 import looperIcon from '../assets/looper-icon.png';
+import { usePageMeta } from '../hooks/usePageMeta';
 
 const apps = [
   {
@@ -16,6 +17,10 @@ const apps = [
 ];
 
 export default function Home() {
+  usePageMeta({
+    title: 'ArchaldStudio — Independent Software Studio',
+    description: 'ArchaldStudio builds tools for creators. Home of Looper, the multi-track guitar looper app.',
+  });
   return (
     <div style={{ position: 'relative' }}>
       <HeroScene />

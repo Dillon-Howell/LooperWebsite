@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import StripeAccent from '../components/StripeAccent';
 import ScrollReveal from '../components/ScrollReveal';
+import { usePageMeta } from '../hooks/usePageMeta';
 
 const apps = [
   { value: 'looper', label: 'Looper' },
@@ -8,6 +9,10 @@ const apps = [
 ];
 
 export default function Support() {
+  usePageMeta({
+    title: 'Support — ArchaldStudio',
+    description: 'Get help with Looper or reach out to ArchaldStudio with questions and feedback.',
+  });
   const [form, setForm] = useState({
     name: '',
     email: '',
