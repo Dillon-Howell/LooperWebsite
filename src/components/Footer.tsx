@@ -23,6 +23,7 @@ export default function Footer() {
           <Link to="/privacy" style={styles.link}>Privacy Policy</Link>
           <Link to="/terms" style={styles.link}>Terms of Service</Link>
           <Link to="/support" style={styles.link}>Support</Link>
+          <Link to="/help" style={styles.link}>Help & FAQ</Link>
         </div>
         <div style={styles.contact}>
           <a href="mailto:support@archaldstudio.com" style={styles.link}>

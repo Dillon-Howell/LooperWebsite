@@ -27,6 +27,7 @@ function AnimatedRoutes() {
         <Route path="/looper" element={<LooperPage />} />
         <Route path="/support" element={<Support />} />
         <Route path="/help" element={<Help />} />
+        <Route path="/looper/help" element={<Help />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="*" element={<NotFound />} />

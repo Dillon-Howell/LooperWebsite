@@ -151,6 +151,9 @@ export default function LooperPage() {
               <Link to="/support" className="btn-primary">
                 Get Support
               </Link>
+              <Link to="/looper/help" className="btn-secondary">
+                Help & FAQ
+              </Link>
             </div>
           </ScrollReveal>
         </div>

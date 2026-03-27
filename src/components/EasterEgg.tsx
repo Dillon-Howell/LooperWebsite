@@ -21,7 +21,7 @@ export default function EasterEgg() {
   const [active, setActive] = useState(false);
   const [paws, setPaws] = useState<Paw[]>([]);
   const progress = useRef<string[]>([]);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
