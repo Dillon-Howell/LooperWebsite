@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom';
 const navLinks = [
   { path: '/', label: 'Home' },
   { path: '/looper', label: 'Looper' },
+  { path: '/looper/community', label: 'Community' },
   { path: '/support', label: 'Support' },
 ];
 
@@ -46,7 +47,11 @@ export default function Navbar() {
                 <Link
                   to={path}
                   onClick={() => setMenuOpen(false)}
-                  className={`navbar-link${location.pathname === path ? ' navbar-link--active' : ''}`}
+                  className={`navbar-link${
+                    location.pathname === path ||
+                    (path === '/looper/community' && (location.pathname.startsWith('/looper/post/') || location.pathname.startsWith('/looper/user/')))
+                      ? ' navbar-link--active' : ''
+                  }`}
                 >
                   {label}
                 </Link>

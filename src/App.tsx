@@ -6,11 +6,15 @@ import CursorTrail from './components/CursorTrail';
 import EasterEgg from './components/EasterEgg';
 import Home from './pages/Home';
 import LooperPage from './pages/LooperPage';
+import Community from './pages/Community';
+import PostDetail from './pages/PostDetail';
+import UserProfile from './pages/UserProfile';
 import Support from './pages/Support';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Help from './pages/Help';
 import NotFound from './pages/NotFound';
+import DeepLink from './pages/DeepLink';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -25,6 +29,9 @@ function AnimatedRoutes() {
       <Routes location={location}>
         <Route path="/" element={<Home />} />
         <Route path="/looper" element={<LooperPage />} />
+        <Route path="/looper/community" element={<Community />} />
+        <Route path="/looper/post/:postId" element={<PostDetail />} />
+        <Route path="/looper/user/:userId" element={<UserProfile />} />
         <Route path="/support" element={<Support />} />
         <Route path="/help" element={<Help />} />
         <Route path="/looper/help" element={<Help />} />
