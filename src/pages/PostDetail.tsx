@@ -281,7 +281,7 @@ export default function PostDetail() {
                   style={styles.lineageItem}
                 >
                   <span style={styles.lineageIcon}>
-                    {"  ".repeat(entry.remixDepth)}↳
+                    {"  ".repeat((entry as any).remixDepth ?? (entry as any).depth ?? 1)}↳
                   </span>
                   <span style={styles.lineageSong}>{entry.songName}</span>
                   <span style={styles.lineageAuthor}>by @{entry.authorUsername}</span>
