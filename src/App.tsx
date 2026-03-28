@@ -14,7 +14,6 @@ import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Help from './pages/Help';
 import NotFound from './pages/NotFound';
-import DeepLink from './pages/DeepLink';
 
 function ScrollToTop() {
   const { pathname } = useLocation();

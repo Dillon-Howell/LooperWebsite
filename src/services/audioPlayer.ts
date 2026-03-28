@@ -25,7 +25,6 @@ let activeSource: AudioBufferSourceNode | null = null;
 let currentPostId: string | null = null;
 let _isPlaying = false;
 let autoStopTimer: ReturnType<typeof setTimeout> | null = null;
-let _onEndCallback: (() => void) | null = null;
 
 function getContext(): AudioContext {
   if (!audioContext || audioContext.state === "closed") {
@@ -48,7 +47,6 @@ export function stopPreview(): void {
   }
   currentPostId = null;
   _isPlaying = false;
-  _onEndCallback = null;
 }
 
 export function isPreviewPlaying(postId?: string): boolean {
@@ -165,8 +163,6 @@ export async function playPreview(
   stopPreview();
   currentPostId = postId;
   _isPlaying = true;
-  _onEndCallback = onEnd ?? null;
-
   try {
     const { downloadUrl } = await getStreamUrl(s3Key);
     const response = await fetch(downloadUrl);

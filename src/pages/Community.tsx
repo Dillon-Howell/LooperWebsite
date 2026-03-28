@@ -34,7 +34,7 @@ export default function Community() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState(initialTag ? `#${initialTag}` : "");
   const [searchType, setSearchType] = useState<"posts" | "users">("posts");
-  const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const loadFeed = useCallback(async (feedTab: Tab, cursor?: string, query?: string) => {
     try {
