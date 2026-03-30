@@ -93,7 +93,6 @@ export function seekTo(timeSec: number): void {
   const remaining = _mixedBuffer.duration - offset;
   autoStopTimer = setTimeout(() => {
     if (currentPostId) {
-      const postId = currentPostId;
       stopPreview();
       _onEndCallback?.();
     }
