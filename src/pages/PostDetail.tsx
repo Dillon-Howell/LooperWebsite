@@ -12,8 +12,10 @@ import {
   getComments,
   createComment,
   toggleLike,
+  toggleCommentLike,
   incrementPlays,
   getRemixChain,
+  getReplies,
   isLoggedIn,
 } from "../services/api";
 import {
@@ -85,6 +87,12 @@ export default function PostDetail() {
   const [commentTimestamp, setCommentTimestamp] = useState<number | null>(null);
   const [progress, setProgress] = useState(0);
   const [scrubberVisible, setScrubberVisible] = useState(false);
+  const [commentSort, setCommentSort] = useState<"popular" | "recent">("popular");
+  const [commentsCursor, setCommentsCursor] = useState<string | undefined>();
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<CommentType | null>(null);
+  const [expandedReplies, setExpandedReplies] = useState<Record<string, CommentType[]>>({});
+  const [loadingReplies, setLoadingReplies] = useState<Record<string, boolean>>({});
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
 
@@ -99,7 +107,7 @@ export default function PostDetail() {
 
     Promise.all([
       getPost(postId),
-      getComments(postId),
+      getComments(postId, { limit: 25, sort: "popular" }),
       getRemixChain(postId).catch(() => null),
     ]).then(([postData, commentsData, chainData]) => {
       setPost(postData);
@@ -107,6 +115,7 @@ export default function PostDetail() {
       setLikeCount(postData.likes);
       setPlayCount(postData.plays);
       setComments(commentsData.comments);
+      setCommentsCursor(commentsData.nextCursor);
       if (chainData?.chain) setChain(chainData.chain);
     }).catch((e) => {
       console.error("Failed to load post:", e);
@@ -231,8 +240,28 @@ export default function PostDetail() {
     if (!post || !commentText.trim() || submittingComment || !isLoggedIn()) return;
     setSubmittingComment(true);
     try {
-      const comment = await createComment(post.postId, commentText.trim(), commentTimestamp ?? undefined);
-      setComments((prev) => [comment, ...prev]);
+      const comment = await createComment(
+        post.postId,
+        commentText.trim(),
+        commentTimestamp ?? undefined,
+        replyingTo?.commentId
+      );
+      if (replyingTo) {
+        setExpandedReplies((prev) => ({
+          ...prev,
+          [replyingTo.commentId]: [...(prev[replyingTo.commentId] ?? []), comment],
+        }));
+        setComments((prev) =>
+          prev.map((c) =>
+            c.commentId === replyingTo.commentId
+              ? { ...c, replyCount: (c.replyCount ?? 0) + 1 }
+              : c
+          )
+        );
+        setReplyingTo(null);
+      } else {
+        setComments((prev) => [comment, ...prev]);
+      }
       setCommentText("");
       setCommentTimestamp(null);
     } catch (e) {
@@ -240,7 +269,67 @@ export default function PostDetail() {
     } finally {
       setSubmittingComment(false);
     }
-  }, [post, commentText, commentTimestamp, submittingComment]);
+  }, [post, commentText, commentTimestamp, submittingComment, replyingTo]);
+
+  const handleCommentLike = useCallback(async (comment: CommentType) => {
+    if (!post || !isLoggedIn()) return;
+    const updateFn = (c: CommentType) =>
+      c.commentId === comment.commentId
+        ? { ...c, isLiked: !c.isLiked, likes: c.isLiked ? Math.max(0, (c.likes ?? 0) - 1) : (c.likes ?? 0) + 1 }
+        : c;
+    setComments((prev) => prev.map(updateFn));
+    setExpandedReplies((prev) => {
+      const updated = { ...prev };
+      for (const key of Object.keys(updated)) updated[key] = updated[key].map(updateFn);
+      return updated;
+    });
+    try {
+      const result = await toggleCommentLike(post.postId, comment.commentId);
+      const applyResult = (c: CommentType) =>
+        c.commentId === comment.commentId ? { ...c, isLiked: result.liked, likes: result.likeCount } : c;
+      setComments((prev) => prev.map(applyResult));
+      setExpandedReplies((prev) => {
+        const updated = { ...prev };
+        for (const key of Object.keys(updated)) updated[key] = updated[key].map(applyResult);
+        return updated;
+      });
+    } catch {}
+  }, [post]);
+
+  const handleLoadReplies = useCallback(async (commentId: string) => {
+    if (!post) return;
+    setLoadingReplies((p) => ({ ...p, [commentId]: true }));
+    try {
+      const data = await getReplies(post.postId, commentId, { limit: 10 });
+      setExpandedReplies((prev) => ({ ...prev, [commentId]: data.replies }));
+    } catch {} finally {
+      setLoadingReplies((p) => ({ ...p, [commentId]: false }));
+    }
+  }, [post]);
+
+  const handleSortChange = useCallback(async (sort: "popular" | "recent") => {
+    if (!post) return;
+    setCommentSort(sort);
+    setComments([]);
+    try {
+      const data = await getComments(post.postId, { limit: 25, sort });
+      setComments(data.comments);
+      setCommentsCursor(data.nextCursor);
+      setExpandedReplies({});
+    } catch {}
+  }, [post]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!post || !commentsCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await getComments(post.postId, { cursor: commentsCursor, limit: 25, sort: commentSort });
+      setComments((prev) => [...prev, ...data.comments]);
+      setCommentsCursor(data.nextCursor);
+    } catch {} finally {
+      setLoadingMore(false);
+    }
+  }, [post, commentsCursor, commentSort, loadingMore]);
 
   const waveformBars = post ? generateWaveform(post.postId, 60) : [];
   const timedComments = comments.filter((c) => c.timestampSec != null);
@@ -471,24 +560,43 @@ export default function PostDetail() {
 
         {/* Comments */}
         <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>
-            <StripeAccent style={{ width: 40, marginRight: 8 }} />
-            Comments ({comments.length})
-          </h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <h3 style={{ ...styles.sectionTitle, marginBottom: 0 }}>
+              <StripeAccent style={{ width: 40, marginRight: 8 }} />
+              Comments ({post.comments})
+            </h3>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["popular", "recent"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => handleSortChange(s)}
+                  style={{
+                    ...styles.sortChip,
+                    ...(commentSort === s ? styles.sortChipActive : {}),
+                  }}
+                >
+                  {s === "popular" ? "Top" : "New"}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Comment input */}
           {isLoggedIn() && (
             <div style={styles.commentInputWrap}>
-              {commentTimestamp != null && (
+              {replyingTo && (
+                <div style={styles.timestampRow}>
+                  <span style={{ ...styles.timestampChip, backgroundColor: "rgba(239, 68, 68, 0.08)" }}>
+                    Replying to @{replyingTo.authorUsername}
+                    <button onClick={() => setReplyingTo(null)} style={styles.timestampRemove}>✕</button>
+                  </span>
+                </div>
+              )}
+              {commentTimestamp != null && !replyingTo && (
                 <div style={styles.timestampRow}>
                   <span style={styles.timestampChip}>
                     {formatDuration(commentTimestamp)}
-                    <button
-                      onClick={() => setCommentTimestamp(null)}
-                      style={styles.timestampRemove}
-                    >
-                      ✕
-                    </button>
+                    <button onClick={() => setCommentTimestamp(null)} style={styles.timestampRemove}>✕</button>
                   </span>
                   <span style={styles.timestampHint}>Click waveform to change time</span>
                 </div>
@@ -496,13 +604,19 @@ export default function PostDetail() {
               <div style={styles.commentInput}>
                 <input
                   type="text"
-                  placeholder={commentTimestamp != null ? `Comment at ${formatDuration(commentTimestamp)}...` : "Write a comment..."}
+                  placeholder={
+                    replyingTo
+                      ? `Reply to @${replyingTo.authorUsername}...`
+                      : commentTimestamp != null
+                        ? `Comment at ${formatDuration(commentTimestamp)}...`
+                        : "Write a comment..."
+                  }
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
                   style={{
                     ...styles.commentField,
-                    ...(commentTimestamp != null ? { borderColor: "var(--accent-red)" } : {}),
+                    ...((commentTimestamp != null || replyingTo) ? { borderColor: "var(--accent-red)" } : {}),
                   }}
                   maxLength={500}
                 />
@@ -512,7 +626,7 @@ export default function PostDetail() {
                   style={styles.commentSubmitBtn}
                   className="btn-primary"
                 >
-                  {submittingComment ? "..." : "Post"}
+                  {submittingComment ? "..." : replyingTo ? "Reply" : "Post"}
                 </button>
               </div>
             </div>
@@ -524,39 +638,117 @@ export default function PostDetail() {
           ) : (
             <div style={styles.commentList}>
               {comments.map((comment) => (
-                <div key={comment.commentId} style={styles.commentCard}>
-                  <Link to={`/looper/user/${comment.authorId}`} style={styles.commentAvatarLink}>
-                    <div style={{ ...styles.commentAvatar, backgroundColor: comment.authorAvatarColor }}>
-                      {comment.authorAvatarUrl ? (
-                        <img src={comment.authorAvatarUrl} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                      ) : (
-                        <span style={styles.commentAvatarInitial}>
-                          {(comment.authorDisplayName || "?")[0].toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                  </Link>
-                  <div style={styles.commentBody}>
-                    <div style={styles.commentHeader}>
-                      <Link to={`/looper/user/${comment.authorId}`} style={styles.commentAuthor}>
-                        {comment.authorDisplayName}
-                      </Link>
-                      {comment.authorIsPro && <span style={styles.proBadgeSm}>PRO</span>}
-                      {comment.timestampSec != null && (
-                        <button
-                          onClick={() => handleTimestampClick(comment.timestampSec!)}
-                          style={styles.commentTimestampBtn}
-                          title={`Jump to ${formatDuration(comment.timestampSec)}`}
-                        >
-                          {formatDuration(comment.timestampSec)}
+                <div key={comment.commentId}>
+                  <div style={styles.commentCard}>
+                    <Link to={`/looper/user/${comment.authorId}`} style={styles.commentAvatarLink}>
+                      <div style={{ ...styles.commentAvatar, backgroundColor: comment.authorAvatarColor }}>
+                        {comment.authorAvatarUrl ? (
+                          <img src={comment.authorAvatarUrl} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                        ) : (
+                          <span style={styles.commentAvatarInitial}>
+                            {(comment.authorDisplayName || "?")[0].toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                    </Link>
+                    <div style={styles.commentBody}>
+                      <div style={styles.commentHeader}>
+                        <Link to={`/looper/user/${comment.authorId}`} style={styles.commentAuthor}>
+                          {comment.authorDisplayName}
+                        </Link>
+                        {comment.authorIsPro && <span style={styles.proBadgeSm}>PRO</span>}
+                        {comment.timestampSec != null && (
+                          <button
+                            onClick={() => handleTimestampClick(comment.timestampSec!)}
+                            style={styles.commentTimestampBtn}
+                            title={`Jump to ${formatDuration(comment.timestampSec)}`}
+                          >
+                            {formatDuration(comment.timestampSec)}
+                          </button>
+                        )}
+                        <span style={styles.commentTime}>{timeAgo(comment.createdAt)}</span>
+                      </div>
+                      <p style={styles.commentText}>{comment.text}</p>
+                      {/* Comment actions */}
+                      <div style={styles.commentActions}>
+                        <button onClick={() => handleCommentLike(comment)} style={styles.commentActionBtn}>
+                          <span style={{ color: comment.isLiked ? "var(--accent-red)" : "var(--text-subtle)" }}>
+                            {comment.isLiked ? "♥" : "♡"}
+                          </span>
+                          {(comment.likes ?? 0) > 0 && (
+                            <span style={{ color: comment.isLiked ? "var(--accent-red)" : "var(--text-subtle)", fontSize: "0.72rem" }}>
+                              {comment.likes}
+                            </span>
+                          )}
                         </button>
-                      )}
-                      <span style={styles.commentTime}>{timeAgo(comment.createdAt)}</span>
+                        <button
+                          onClick={() => { setReplyingTo(comment); setCommentTimestamp(null); }}
+                          style={styles.commentActionBtn}
+                        >
+                          <span style={{ color: "var(--text-subtle)" }}>Reply</span>
+                          {(comment.replyCount ?? 0) > 0 && (
+                            <span style={{ color: "var(--text-subtle)", fontSize: "0.72rem" }}>({comment.replyCount})</span>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    <p style={styles.commentText}>{comment.text}</p>
                   </div>
+                  {/* Replies */}
+                  {(comment.replyCount ?? 0) > 0 && !expandedReplies[comment.commentId] && (
+                    <button
+                      onClick={() => handleLoadReplies(comment.commentId)}
+                      style={styles.viewRepliesBtn}
+                    >
+                      {loadingReplies[comment.commentId]
+                        ? "Loading..."
+                        : `View ${comment.replyCount} ${comment.replyCount === 1 ? "reply" : "replies"}`}
+                    </button>
+                  )}
+                  {expandedReplies[comment.commentId]?.map((reply) => (
+                    <div key={reply.commentId} style={styles.replyCard}>
+                      <Link to={`/looper/user/${reply.authorId}`} style={styles.commentAvatarLink}>
+                        <div style={{ ...styles.commentAvatar, backgroundColor: reply.authorAvatarColor, width: 26, height: 26, borderRadius: 13 }}>
+                          {reply.authorAvatarUrl ? (
+                            <img src={reply.authorAvatarUrl} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                          ) : (
+                            <span style={{ ...styles.commentAvatarInitial, fontSize: "0.65rem" }}>
+                              {(reply.authorDisplayName || "?")[0].toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                      <div style={styles.commentBody}>
+                        <div style={styles.commentHeader}>
+                          <Link to={`/looper/user/${reply.authorId}`} style={styles.commentAuthor}>
+                            {reply.authorDisplayName}
+                          </Link>
+                          {reply.authorIsPro && <span style={styles.proBadgeSm}>PRO</span>}
+                          <span style={styles.commentTime}>{timeAgo(reply.createdAt)}</span>
+                        </div>
+                        <p style={styles.commentText}>{reply.text}</p>
+                        <div style={styles.commentActions}>
+                          <button onClick={() => handleCommentLike(reply)} style={styles.commentActionBtn}>
+                            <span style={{ color: reply.isLiked ? "var(--accent-red)" : "var(--text-subtle)" }}>
+                              {reply.isLiked ? "♥" : "♡"}
+                            </span>
+                            {(reply.likes ?? 0) > 0 && (
+                              <span style={{ color: reply.isLiked ? "var(--accent-red)" : "var(--text-subtle)", fontSize: "0.72rem" }}>
+                                {reply.likes}
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
+              {/* Load more */}
+              {commentsCursor && (
+                <button onClick={handleLoadMore} style={styles.loadMoreBtn} disabled={loadingMore}>
+                  {loadingMore ? "Loading..." : "Load more comments"}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -805,6 +997,39 @@ const styles: Record<string, React.CSSProperties> = {
   },
   commentTime: { color: "var(--text-subtle)", fontSize: "0.75rem", marginLeft: "auto" },
   commentText: { color: "var(--text-muted)", fontSize: "0.88rem", lineHeight: 1.5, marginTop: 4 },
+  commentActions: { display: "flex", alignItems: "center", gap: 12, marginTop: 6 },
+  commentActionBtn: {
+    display: "inline-flex", alignItems: "center", gap: 4,
+    background: "none", border: "none", cursor: "pointer", padding: 0,
+    fontSize: "0.8rem", fontFamily: "var(--font-body)", color: "var(--text-subtle)",
+    transition: "opacity 0.2s",
+  },
+  viewRepliesBtn: {
+    background: "none", border: "none", cursor: "pointer",
+    color: "var(--accent-red)", fontSize: "0.8rem", fontWeight: 600,
+    padding: "6px 0 6px 56px", fontFamily: "var(--font-body)",
+    transition: "opacity 0.2s",
+  },
+  replyCard: {
+    display: "flex", gap: 10, padding: "10px 16px 10px 56px",
+    backgroundColor: "var(--surface)", borderRadius: 10,
+    borderLeft: "2px solid var(--border)", marginTop: 4,
+  },
+  sortChip: {
+    background: "none", border: "1px solid var(--border)", borderRadius: 14,
+    padding: "4px 12px", fontSize: "0.78rem", fontWeight: 600,
+    color: "var(--text-subtle)", cursor: "pointer", fontFamily: "var(--font-body)",
+    transition: "all 0.2s",
+  },
+  sortChipActive: {
+    backgroundColor: "var(--accent-red)", borderColor: "var(--accent-red)", color: "#fff",
+  },
+  loadMoreBtn: {
+    width: "100%", padding: "10px 0", background: "none",
+    border: "1px solid var(--border)", borderRadius: 10,
+    color: "var(--text-muted)", fontSize: "0.85rem", fontWeight: 500,
+    cursor: "pointer", fontFamily: "var(--font-body)", transition: "border-color 0.2s",
+  },
 
   loadingContainer: { textAlign: "center" as const, padding: "100px 0" },
   spinner: {

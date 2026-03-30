@@ -89,6 +89,10 @@ export interface Comment {
   authorHighlightColor?: string;
   text: string;
   timestampSec?: number;
+  likes: number;
+  replyCount: number;
+  parentCommentId?: string;
+  isLiked?: boolean;
   createdAt: number;
 }
 
@@ -167,22 +171,53 @@ export async function incrementPlays(postId: string): Promise<{ plays: number }>
 
 // ── Comments ─────────────────────────────────────────────────────────
 
-export async function getComments(postId: string, cursor?: string): Promise<{ comments: Comment[]; nextCursor?: string }> {
+export async function getComments(
+  postId: string,
+  options: { cursor?: string; limit?: number; sort?: "popular" | "recent" } = {}
+): Promise<{ comments: Comment[]; nextCursor?: string; totalCount?: number }> {
   const params = new URLSearchParams();
-  if (cursor) params.set("cursor", cursor);
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.sort) params.set("sort", options.sort);
   const qs = params.toString();
   const res = await apiFetch(`/posts/${postId}/comments${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error(`Get comments failed (${res.status})`);
   return res.json();
 }
 
-export async function createComment(postId: string, text: string, timestampSec?: number): Promise<Comment> {
+export async function createComment(
+  postId: string,
+  text: string,
+  timestampSec?: number,
+  parentCommentId?: string
+): Promise<Comment> {
   const body: Record<string, unknown> = { text };
   if (timestampSec != null && timestampSec >= 0) body.timestampSec = timestampSec;
+  if (parentCommentId) body.parentCommentId = parentCommentId;
   const res = await apiFetch(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Create comment failed (${res.status})`);
   const data = await res.json();
   return data.comment;
+}
+
+export async function toggleCommentLike(postId: string, commentId: string): Promise<{ liked: boolean; likeCount: number }> {
+  const res = await apiFetch(`/posts/${postId}/comments/${commentId}/like`, { method: "POST" });
+  if (!res.ok) throw new Error(`Toggle comment like failed (${res.status})`);
+  return res.json();
+}
+
+export async function getReplies(
+  postId: string,
+  commentId: string,
+  options: { cursor?: string; limit?: number } = {}
+): Promise<{ replies: Comment[]; nextCursor?: string }> {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit) params.set("limit", String(options.limit));
+  const qs = params.toString();
+  const res = await apiFetch(`/posts/${postId}/comments/${commentId}/replies${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error(`Get replies failed (${res.status})`);
+  return res.json();
 }
 
 // ── Users ────────────────────────────────────────────────────────────
