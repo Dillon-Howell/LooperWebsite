@@ -286,3 +286,100 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
   if (!res.ok) throw new Error(`Toggle repost failed (${res.status})`);
   return res.json();
 }
+
+// ── Admin Analytics ─────────────────────────────────────────────────
+
+export interface AnalyticsOverview {
+  dau: number;
+  mau: number;
+  totalUsers: number;
+  totalPosts: number;
+  today: {
+    signups: number;
+    logins: number;
+    posts: number;
+    plays: number;
+    likes: number;
+    comments: number;
+    replies: number;
+    remixes: number;
+    reposts: number;
+    bookmarks: number;
+    follows: number;
+    searches: number;
+    uploads: number;
+  };
+  topPosts: Array<{
+    postId: string;
+    songName: string;
+    authorUsername: string;
+    plays: number;
+    likes: number;
+    comments: number;
+    remixes: number;
+    reposts: number;
+    createdAt: number;
+  }>;
+}
+
+export interface DailyMetric {
+  date: string;
+  dau?: number;
+  signup?: number;
+  login?: number;
+  post_create?: number;
+  post_play?: number;
+  post_like?: number;
+  comment_create?: number;
+  comment_reply?: number;
+  remix?: number;
+  repost?: number;
+  bookmark?: number;
+  follow?: number;
+  search?: number;
+  upload?: number;
+  app_open?: number;
+}
+
+export interface RetentionData {
+  retention: { d1: number; d7: number; d30: number };
+}
+
+export async function getAnalyticsOverview(): Promise<AnalyticsOverview> {
+  const res = await apiFetch("/admin/analytics?action=overview");
+  if (!res.ok) throw new Error(`Analytics overview failed (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsDaily(from: string, to: string): Promise<{ daily: DailyMetric[] }> {
+  const res = await apiFetch(`/admin/analytics?action=daily&from=${from}&to=${to}`);
+  if (!res.ok) throw new Error(`Analytics daily failed (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsEvents(
+  date: string,
+  type?: string,
+  limit = 100
+): Promise<{ events: Record<string, unknown>[]; nextCursor?: string }> {
+  const params = new URLSearchParams({ action: "events", date, limit: String(limit) });
+  if (type) params.set("type", type);
+  const res = await apiFetch(`/admin/analytics?${params}`);
+  if (!res.ok) throw new Error(`Analytics events failed (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsTopPosts(
+  limit = 20,
+  sortBy = "plays"
+): Promise<{ posts: AnalyticsOverview["topPosts"] }> {
+  const res = await apiFetch(`/admin/analytics?action=top-posts&limit=${limit}&sortBy=${sortBy}`);
+  if (!res.ok) throw new Error(`Analytics top posts failed (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsRetention(): Promise<RetentionData> {
+  const res = await apiFetch("/admin/analytics?action=retention");
+  if (!res.ok) throw new Error(`Analytics retention failed (${res.status})`);
+  return res.json();
+}
