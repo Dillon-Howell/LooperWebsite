@@ -25,6 +25,11 @@ let activeSource: AudioBufferSourceNode | null = null;
 let currentPostId: string | null = null;
 let _isPlaying = false;
 let autoStopTimer: ReturnType<typeof setTimeout> | null = null;
+let _playbackStartTime = 0;
+let _playbackOffset = 0;
+let _mixedBuffer: AudioBuffer | null = null;
+let _mixedGainNode: GainNode | null = null;
+let _onEndCallback: (() => void) | undefined;
 
 function getContext(): AudioContext {
   if (!audioContext || audioContext.state === "closed") {
@@ -47,6 +52,52 @@ export function stopPreview(): void {
   }
   currentPostId = null;
   _isPlaying = false;
+  _playbackOffset = 0;
+}
+
+/** Returns current playback position in seconds */
+export function getPlaybackTime(): number {
+  if (!_isPlaying || !audioContext) return 0;
+  return _playbackOffset + (audioContext.currentTime - _playbackStartTime);
+}
+
+/** Returns the duration of the currently loaded mix */
+export function getMixDuration(): number {
+  return _mixedBuffer?.duration ?? 0;
+}
+
+/** Seek to a specific time (seconds) in the current preview */
+export function seekTo(timeSec: number): void {
+  if (!_mixedBuffer || !_isPlaying || !audioContext) return;
+  const ctx = audioContext;
+  const offset = Math.max(0, Math.min(timeSec, _mixedBuffer.duration - 0.1));
+
+  // Stop current source
+  if (autoStopTimer) { clearTimeout(autoStopTimer); autoStopTimer = null; }
+  if (activeSource) { try { activeSource.stop(0); } catch {} }
+
+  // Start new source from offset
+  const source = ctx.createBufferSource();
+  source.buffer = _mixedBuffer;
+  if (!_mixedGainNode) {
+    _mixedGainNode = ctx.createGain();
+    _mixedGainNode.gain.value = 1.0;
+    _mixedGainNode.connect(ctx.destination);
+  }
+  source.connect(_mixedGainNode);
+  source.start(ctx.currentTime, offset);
+  activeSource = source;
+  _playbackStartTime = ctx.currentTime;
+  _playbackOffset = offset;
+
+  const remaining = _mixedBuffer.duration - offset;
+  autoStopTimer = setTimeout(() => {
+    if (currentPostId) {
+      const postId = currentPostId;
+      stopPreview();
+      _onEndCallback?.();
+    }
+  }, (remaining + 0.1) * 1000);
 }
 
 export function isPreviewPlaying(postId?: string): boolean {
@@ -192,22 +243,27 @@ export async function playPreview(
     if (bufferMap.size === 0) throw new Error("No playable tracks found");
     if (currentPostId !== postId) { onEnd?.(); return; }
 
-    const mixedBuffer = mixdown(ctx, bundle.tracks as Track[], bufferMap);
+    const mixed = mixdown(ctx, bundle.tracks as Track[], bufferMap);
+    _mixedBuffer = mixed;
+    _onEndCallback = onEnd;
+
     const source = ctx.createBufferSource();
-    source.buffer = mixedBuffer;
-    const gainNode = ctx.createGain();
-    gainNode.gain.value = 1.0;
-    source.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    source.buffer = mixed;
+    _mixedGainNode = ctx.createGain();
+    _mixedGainNode.gain.value = 1.0;
+    source.connect(_mixedGainNode);
+    _mixedGainNode.connect(ctx.destination);
     source.start(ctx.currentTime + 0.05);
     activeSource = source;
+    _playbackStartTime = ctx.currentTime + 0.05;
+    _playbackOffset = 0;
 
     autoStopTimer = setTimeout(() => {
       if (currentPostId === postId) {
         stopPreview();
         onEnd?.();
       }
-    }, (mixedBuffer.duration + 0.1) * 1000);
+    }, (mixed.duration + 0.1) * 1000);
   } catch (error) {
     stopPreview();
     throw error;

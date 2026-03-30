@@ -88,6 +88,7 @@ export interface Comment {
   authorIsPro?: boolean;
   authorHighlightColor?: string;
   text: string;
+  timestampSec?: number;
   createdAt: number;
 }
 
@@ -175,8 +176,10 @@ export async function getComments(postId: string, cursor?: string): Promise<{ co
   return res.json();
 }
 
-export async function createComment(postId: string, text: string): Promise<Comment> {
-  const res = await apiFetch(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify({ text }) });
+export async function createComment(postId: string, text: string, timestampSec?: number): Promise<Comment> {
+  const body: Record<string, unknown> = { text };
+  if (timestampSec != null && timestampSec >= 0) body.timestampSec = timestampSec;
+  const res = await apiFetch(`/posts/${postId}/comments`, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Create comment failed (${res.status})`);
   const data = await res.json();
   return data.comment;

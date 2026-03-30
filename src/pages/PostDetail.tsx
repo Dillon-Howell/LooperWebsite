@@ -1,8 +1,8 @@
 /**
- * Post detail page — full post view with comments and remix chain.
+ * Post detail page — full post view with comments, remix chain, and timed comments.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import StripeAccent from "../components/StripeAccent";
 import { usePageMeta } from "../hooks/usePageMeta";
@@ -16,7 +16,14 @@ import {
   getRemixChain,
   isLoggedIn,
 } from "../services/api";
-import { playPreview, stopPreview, isPreviewPlaying } from "../services/audioPlayer";
+import {
+  playPreview,
+  stopPreview,
+  isPreviewPlaying,
+  getPlaybackTime,
+  getMixDuration,
+  seekTo,
+} from "../services/audioPlayer";
 
 function formatCount(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
@@ -42,6 +49,26 @@ function timeAgo(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+/** Deterministic waveform bars from a seed string */
+function generateWaveform(seed: string, count: number): number[] {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  const vals: number[] = [];
+  for (let i = 0; i < count; i++) {
+    hash = ((hash * 1103515245 + 12345) & 0x7fffffff);
+    vals.push(0.2 + ((hash % 100) / 100) * 0.8);
+  }
+  // Smooth
+  return vals.map((_, i) => {
+    const prev = vals[Math.max(0, i - 1)];
+    const curr = vals[i];
+    const next = vals[Math.min(vals.length - 1, i + 1)];
+    return (prev + curr + next) / 3;
+  });
+}
+
 export default function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
   const [post, setPost] = useState<FeedPost | null>(null);
@@ -55,6 +82,11 @@ export default function PostDetail() {
   const [isLoadingPlay, setIsLoadingPlay] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [commentTimestamp, setCommentTimestamp] = useState<number | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [scrubberVisible, setScrubberVisible] = useState(false);
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const waveformRef = useRef<HTMLDivElement>(null);
 
   usePageMeta({
     title: post ? `${post.songName} by ${post.authorDisplayName} — Looper Studio` : "Post — Looper Studio",
@@ -79,7 +111,30 @@ export default function PostDetail() {
     }).catch((e) => {
       console.error("Failed to load post:", e);
     }).finally(() => setLoading(false));
+
+    return () => {
+      stopPreview();
+      if (progressRef.current) clearInterval(progressRef.current);
+    };
   }, [postId]);
+
+  const startProgressTracking = useCallback(() => {
+    if (progressRef.current) clearInterval(progressRef.current);
+    progressRef.current = setInterval(() => {
+      const dur = getMixDuration();
+      if (dur > 0) {
+        setProgress(Math.min(1, getPlaybackTime() / dur));
+      }
+    }, 50);
+    setScrubberVisible(true);
+  }, []);
+
+  const stopProgressTracking = useCallback(() => {
+    if (progressRef.current) {
+      clearInterval(progressRef.current);
+      progressRef.current = null;
+    }
+  }, []);
 
   const handlePlay = useCallback(async () => {
     if (!post || isLoadingPlay) return;
@@ -87,20 +142,75 @@ export default function PostDetail() {
     if (isPreviewPlaying(post.postId)) {
       stopPreview();
       setIsPlaying(false);
+      stopProgressTracking();
+      setProgress(0);
+      setScrubberVisible(false);
       return;
     }
 
     setIsLoadingPlay(true);
+    setScrubberVisible(true);
     try {
       incrementPlays(post.postId).then(({ plays }) => setPlayCount(plays)).catch(() => {});
-      await playPreview(post.s3Key, post.postId, () => setIsPlaying(false));
+      await playPreview(post.s3Key, post.postId, () => {
+        setIsPlaying(false);
+        stopProgressTracking();
+        setProgress(0);
+        setScrubberVisible(false);
+      });
       setIsPlaying(true);
+      startProgressTracking();
     } catch (e) {
       console.error("Play failed:", e);
+      setScrubberVisible(false);
     } finally {
       setIsLoadingPlay(false);
     }
-  }, [post, isLoadingPlay]);
+  }, [post, isLoadingPlay, startProgressTracking, stopProgressTracking]);
+
+  const handleWaveformClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!waveformRef.current || !post?.duration) return;
+    const rect = waveformRef.current.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const sec = Math.round(fraction * post.duration);
+
+    if (isPlaying) {
+      seekTo(sec);
+    } else {
+      setCommentTimestamp(sec);
+    }
+    setScrubberVisible(true);
+  }, [post, isPlaying]);
+
+  const handleTimestampClick = useCallback((sec: number) => {
+    if (!post) return;
+    if (isPlaying) {
+      seekTo(sec);
+    } else {
+      // Start playback from that point
+      (async () => {
+        setIsLoadingPlay(true);
+        setScrubberVisible(true);
+        try {
+          incrementPlays(post.postId).then(({ plays }) => setPlayCount(plays)).catch(() => {});
+          await playPreview(post.s3Key, post.postId, () => {
+            setIsPlaying(false);
+            stopProgressTracking();
+            setProgress(0);
+            setScrubberVisible(false);
+          });
+          setIsPlaying(true);
+          startProgressTracking();
+          // Seek after short delay to let buffer load
+          setTimeout(() => seekTo(sec), 100);
+        } catch (e) {
+          console.error("Play failed:", e);
+        } finally {
+          setIsLoadingPlay(false);
+        }
+      })();
+    }
+  }, [post, isPlaying, startProgressTracking, stopProgressTracking]);
 
   const handleLike = useCallback(async () => {
     if (!post || !isLoggedIn()) return;
@@ -121,15 +231,19 @@ export default function PostDetail() {
     if (!post || !commentText.trim() || submittingComment || !isLoggedIn()) return;
     setSubmittingComment(true);
     try {
-      const comment = await createComment(post.postId, commentText.trim());
+      const comment = await createComment(post.postId, commentText.trim(), commentTimestamp ?? undefined);
       setComments((prev) => [comment, ...prev]);
       setCommentText("");
+      setCommentTimestamp(null);
     } catch (e) {
       console.error("Failed to comment:", e);
     } finally {
       setSubmittingComment(false);
     }
-  }, [post, commentText, submittingComment]);
+  }, [post, commentText, commentTimestamp, submittingComment]);
+
+  const waveformBars = post ? generateWaveform(post.postId, 60) : [];
+  const timedComments = comments.filter((c) => c.timestampSec != null);
 
   if (loading) {
     return (
@@ -191,24 +305,88 @@ export default function PostDetail() {
             </div>
           </div>
 
-          {/* Song player */}
-          <div style={styles.songPlayer}>
-            <div style={styles.songDetails}>
-              <h2 style={styles.songName}>{post.songName}</h2>
-              <div style={styles.songMeta}>
-                {post.bpm} BPM · {formatDuration(post.duration)} · {post.trackCount} track{post.trackCount !== 1 ? "s" : ""}
+          {/* Song player — redesigned with waveform scrubber */}
+          <div style={styles.playerContainer}>
+            <div style={styles.playerTop}>
+              <button
+                onClick={handlePlay}
+                disabled={isLoadingPlay}
+                style={{
+                  ...styles.playBtnCircle,
+                  ...(isPlaying ? styles.playBtnCircleActive : {}),
+                }}
+              >
+                {isLoadingPlay ? (
+                  <span style={styles.playBtnSpinner} />
+                ) : isPlaying ? (
+                  <span style={{ fontSize: 14 }}>■</span>
+                ) : (
+                  <span style={{ fontSize: 16, marginLeft: 2 }}>▶</span>
+                )}
+              </button>
+              <div style={styles.playerInfo}>
+                <h2 style={styles.songName}>{post.songName}</h2>
+                <div style={styles.songMeta}>
+                  {post.bpm} BPM · {formatDuration(post.duration)} · {post.trackCount} track{post.trackCount !== 1 ? "s" : ""}
+                </div>
               </div>
+              {(isPlaying || scrubberVisible) && (
+                <span style={styles.timeDisplay}>
+                  {formatDuration(progress * post.duration)} / {formatDuration(post.duration)}
+                </span>
+              )}
             </div>
-            <button
-              onClick={handlePlay}
-              disabled={isLoadingPlay}
-              style={{
-                ...styles.playBtn,
-                ...(isPlaying ? styles.playBtnActive : {}),
-              }}
+
+            {/* Waveform scrubber */}
+            <div
+              ref={waveformRef}
+              onClick={handleWaveformClick}
+              style={styles.waveformContainer}
+              title="Click to set timestamp or seek"
             >
-              {isLoadingPlay ? "..." : isPlaying ? "■ Stop" : "▶ Play"}
-            </button>
+              {/* Bars */}
+              <div style={styles.waveformBars}>
+                {waveformBars.map((h, i) => {
+                  const barProgress = (i + 1) / waveformBars.length;
+                  const isPast = barProgress <= progress && isPlaying;
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        flex: 1,
+                        height: `${h * 100}%`,
+                        backgroundColor: isPast
+                          ? "var(--accent-red)"
+                          : "var(--border)",
+                        borderRadius: 1,
+                        transition: "background-color 0.1s",
+                        minWidth: 2,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Playhead */}
+              {(isPlaying || scrubberVisible) && progress > 0 && (
+                <div style={{
+                  ...styles.playhead,
+                  left: `${progress * 100}%`,
+                }} />
+              )}
+
+              {/* Timed comment markers */}
+              {post.duration > 0 && timedComments.map((c) => (
+                <div
+                  key={c.commentId}
+                  style={{
+                    ...styles.commentDot,
+                    left: `${((c.timestampSec ?? 0) / post.duration) * 100}%`,
+                  }}
+                  title={`${formatDuration(c.timestampSec ?? 0)} — ${c.authorDisplayName}: ${c.text.slice(0, 40)}`}
+                />
+              ))}
+            </div>
           </div>
 
           {/* Description */}
@@ -300,24 +478,43 @@ export default function PostDetail() {
 
           {/* Comment input */}
           {isLoggedIn() && (
-            <div style={styles.commentInput}>
-              <input
-                type="text"
-                placeholder="Write a comment..."
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
-                style={styles.commentField}
-                maxLength={500}
-              />
-              <button
-                onClick={handleSubmitComment}
-                disabled={!commentText.trim() || submittingComment}
-                style={styles.commentSubmitBtn}
-                className="btn-primary"
-              >
-                {submittingComment ? "..." : "Post"}
-              </button>
+            <div style={styles.commentInputWrap}>
+              {commentTimestamp != null && (
+                <div style={styles.timestampRow}>
+                  <span style={styles.timestampChip}>
+                    {formatDuration(commentTimestamp)}
+                    <button
+                      onClick={() => setCommentTimestamp(null)}
+                      style={styles.timestampRemove}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                  <span style={styles.timestampHint}>Click waveform to change time</span>
+                </div>
+              )}
+              <div style={styles.commentInput}>
+                <input
+                  type="text"
+                  placeholder={commentTimestamp != null ? `Comment at ${formatDuration(commentTimestamp)}...` : "Write a comment..."}
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSubmitComment()}
+                  style={{
+                    ...styles.commentField,
+                    ...(commentTimestamp != null ? { borderColor: "var(--accent-red)" } : {}),
+                  }}
+                  maxLength={500}
+                />
+                <button
+                  onClick={handleSubmitComment}
+                  disabled={!commentText.trim() || submittingComment}
+                  style={styles.commentSubmitBtn}
+                  className="btn-primary"
+                >
+                  {submittingComment ? "..." : "Post"}
+                </button>
+              </div>
             </div>
           )}
 
@@ -345,6 +542,15 @@ export default function PostDetail() {
                         {comment.authorDisplayName}
                       </Link>
                       {comment.authorIsPro && <span style={styles.proBadgeSm}>PRO</span>}
+                      {comment.timestampSec != null && (
+                        <button
+                          onClick={() => handleTimestampClick(comment.timestampSec!)}
+                          style={styles.commentTimestampBtn}
+                          title={`Jump to ${formatDuration(comment.timestampSec)}`}
+                        >
+                          {formatDuration(comment.timestampSec)}
+                        </button>
+                      )}
                       <span style={styles.commentTime}>{timeAgo(comment.createdAt)}</span>
                     </div>
                     <p style={styles.commentText}>{comment.text}</p>
@@ -407,24 +613,100 @@ const styles: Record<string, React.CSSProperties> = {
   },
   authorMeta: { color: "var(--text-subtle)", fontSize: "0.82rem" },
 
-  songPlayer: {
-    display: "flex", alignItems: "center", gap: 16,
-    backgroundColor: "var(--surface)", borderRadius: 14, padding: "18px 20px",
+  /* Player */
+  playerContainer: {
+    backgroundColor: "var(--surface)",
+    borderRadius: 14,
+    padding: "16px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
   },
-  songDetails: { flex: 1 },
+  playerTop: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+  },
+  playBtnCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    border: "2px solid var(--accent-red)",
+    backgroundColor: "transparent",
+    color: "var(--accent-red)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    flexShrink: 0,
+    fontFamily: "var(--font-body)",
+  },
+  playBtnCircleActive: {
+    backgroundColor: "var(--accent-red)",
+    color: "#fff",
+  },
+  playBtnSpinner: {
+    width: 16,
+    height: 16,
+    border: "2px solid var(--accent-red)",
+    borderTopColor: "transparent",
+    borderRadius: "50%",
+    animation: "spin 0.8s linear infinite",
+    display: "inline-block",
+  },
+  playerInfo: { flex: 1, minWidth: 0 },
   songName: {
-    fontFamily: "var(--font-display)", fontSize: "1.3rem", fontWeight: 700,
-    color: "var(--text)", margin: 0,
+    fontFamily: "var(--font-display)", fontSize: "1.2rem", fontWeight: 700,
+    color: "var(--text)", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
   },
-  songMeta: { color: "var(--text-subtle)", fontSize: "0.85rem", marginTop: 4 },
-  playBtn: {
-    padding: "10px 24px", borderRadius: 10, border: "2px solid var(--accent-red)",
-    backgroundColor: "transparent", color: "var(--accent-red)",
-    fontWeight: 600, fontSize: "0.9rem", cursor: "pointer",
-    transition: "all 0.2s ease", fontFamily: "var(--font-body)",
+  songMeta: { color: "var(--text-subtle)", fontSize: "0.82rem", marginTop: 2 },
+  timeDisplay: {
+    fontSize: "0.75rem",
+    color: "var(--text-subtle)",
+    fontVariantNumeric: "tabular-nums",
     whiteSpace: "nowrap" as const,
+    flexShrink: 0,
   },
-  playBtnActive: { backgroundColor: "var(--accent-red)", color: "#fff" },
+
+  /* Waveform */
+  waveformContainer: {
+    position: "relative",
+    height: 40,
+    cursor: "pointer",
+    borderRadius: 6,
+    overflow: "hidden",
+    backgroundColor: "var(--bg-light)",
+  },
+  waveformBars: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 1.5,
+    height: "100%",
+    padding: "4px 2px",
+  },
+  playhead: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 2,
+    backgroundColor: "var(--accent-red)",
+    borderRadius: 1,
+    zIndex: 2,
+    boxShadow: "0 0 6px var(--accent-red)",
+    transition: "left 0.05s linear",
+  },
+  commentDot: {
+    position: "absolute",
+    bottom: 2,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "var(--accent-yellow)",
+    border: "1px solid var(--surface)",
+    zIndex: 3,
+    marginLeft: -3,
+  },
 
   description: { color: "var(--text-muted)", fontSize: "0.92rem", lineHeight: 1.6, marginTop: 16 },
   hashtagRow: { display: "flex", flexWrap: "wrap" as const, gap: 8, marginTop: 10 },
@@ -458,11 +740,38 @@ const styles: Record<string, React.CSSProperties> = {
   lineageSong: { color: "var(--text)", fontWeight: 500, fontSize: "0.9rem" },
   lineageAuthor: { color: "var(--text-subtle)", fontSize: "0.8rem", marginLeft: "auto" },
 
-  commentInput: { display: "flex", gap: 10, marginBottom: 20 },
+  /* Comment input */
+  commentInputWrap: { marginBottom: 20, display: "flex", flexDirection: "column" as const, gap: 8 },
+  timestampRow: { display: "flex", alignItems: "center", gap: 10 },
+  timestampChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "3px 10px",
+    backgroundColor: "rgba(239, 68, 68, 0.12)",
+    color: "var(--accent-red)",
+    fontSize: "0.8rem",
+    fontWeight: 700,
+    borderRadius: 12,
+    fontVariantNumeric: "tabular-nums",
+  },
+  timestampRemove: {
+    background: "none",
+    border: "none",
+    color: "var(--accent-red)",
+    cursor: "pointer",
+    fontSize: "0.7rem",
+    padding: 0,
+    lineHeight: 1,
+    fontFamily: "var(--font-body)",
+  },
+  timestampHint: { color: "var(--text-subtle)", fontSize: "0.75rem" },
+  commentInput: { display: "flex", gap: 10 },
   commentField: {
     flex: 1, padding: "10px 14px", backgroundColor: "var(--surface)",
     border: "1px solid var(--border)", borderRadius: 10, color: "var(--text)",
     fontSize: "0.9rem", fontFamily: "var(--font-body)", outline: "none",
+    transition: "border-color 0.2s",
   },
   commentSubmitBtn: { padding: "10px 20px", fontSize: "0.85rem", fontFamily: "var(--font-body)" },
 
@@ -479,8 +788,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   commentAvatarInitial: { color: "#fff", fontWeight: 700, fontSize: "0.75rem", fontFamily: "var(--font-display)" },
   commentBody: { flex: 1, minWidth: 0 },
-  commentHeader: { display: "flex", alignItems: "center", gap: 6 },
+  commentHeader: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const },
   commentAuthor: { color: "var(--text)", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none" },
+  commentTimestampBtn: {
+    background: "rgba(239, 68, 68, 0.12)",
+    border: "none",
+    color: "var(--accent-red)",
+    fontSize: "0.72rem",
+    fontWeight: 700,
+    padding: "2px 7px",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontVariantNumeric: "tabular-nums",
+    fontFamily: "var(--font-body)",
+    transition: "background 0.2s",
+  },
   commentTime: { color: "var(--text-subtle)", fontSize: "0.75rem", marginLeft: "auto" },
   commentText: { color: "var(--text-muted)", fontSize: "0.88rem", lineHeight: 1.5, marginTop: 4 },
 
