@@ -2,13 +2,17 @@
  * User profile page — view user info and their posts.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import PostCard from "../components/PostCard";
 import StripeAccent from "../components/StripeAccent";
 import { usePageMeta } from "../hooks/usePageMeta";
+import { useAuth } from "../contexts/AuthContext";
 import type { PublicUserProfile as UserProfileType, FeedPost } from "../services/api";
-import { getUserProfile, getUserPosts, toggleFollow, isLoggedIn } from "../services/api";
+import {
+  getUserProfile, getUserPosts, toggleFollow, isLoggedIn, updateMyProfile,
+  presignUpload, completeUpload, createPost,
+} from "../services/api";
 
 function formatCount(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
@@ -18,11 +22,31 @@ function formatCount(n: number): string {
 
 export default function UserProfile() {
   const { userId } = useParams<{ userId: string }>();
+  const { user: authUser } = useAuth();
+  const isOwnProfile = authUser?.userId === userId;
   const [user, setUser] = useState<UserProfileType | null>(null);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followerCount, setFollowerCount] = useState(0);
+
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editBio, setEditBio] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Post upload state
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showPostForm, setShowPostForm] = useState(false);
+  const [postSongName, setPostSongName] = useState("");
+  const [postDescription, setPostDescription] = useState("");
+  const [postHashtags, setPostHashtags] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   usePageMeta({
     title: user ? `${user.displayName} (@${user.username}) — Looper Studio` : "Profile — Looper Studio",
@@ -60,6 +84,109 @@ export default function UserProfile() {
       setFollowerCount((c) => c + (prev ? 1 : -1));
     }
   }, [userId, isFollowing]);
+
+  const startEditing = useCallback(() => {
+    if (!user) return;
+    setEditDisplayName(user.displayName || "");
+    setEditBio(user.bio || "");
+    setEditError(null);
+    setEditing(true);
+  }, [user]);
+
+  const saveProfile = useCallback(async () => {
+    setSaving(true);
+    setEditError(null);
+    try {
+      await updateMyProfile({
+        displayName: editDisplayName.trim(),
+        bio: editBio.trim(),
+      });
+      // Refresh profile data
+      if (userId) {
+        const refreshed = await getUserProfile(userId);
+        setUser(refreshed);
+      }
+      setEditing(false);
+    } catch (err: any) {
+      setEditError(err.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }, [editDisplayName, editBio, userId]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith(".looper")) {
+      setUploadError("Only .looper files are supported");
+      return;
+    }
+    setSelectedFile(file);
+    setPostSongName(file.name.replace(/\.looper$/, ""));
+    setUploadError(null);
+    setShowPostForm(true);
+  }, []);
+
+  const handlePost = useCallback(async () => {
+    if (!selectedFile || !postSongName.trim()) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      // 1. Get presigned URL
+      setUploadProgress("Preparing upload...");
+      const presign = await presignUpload(selectedFile.name, selectedFile.size);
+
+      // 2. Upload file to S3
+      setUploadProgress("Uploading...");
+      const uploadRes = await fetch(presign.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: selectedFile,
+      });
+      if (!uploadRes.ok) throw new Error("Upload failed");
+
+      // 3. Complete upload (record quota)
+      setUploadProgress("Finalizing upload...");
+      await completeUpload(presign.key);
+
+      // 4. Create post
+      setUploadProgress("Creating post...");
+      // Parse hashtags
+      const tags = postHashtags
+        .split(/[,\s#]+/)
+        .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9_-]/g, ""))
+        .filter((t) => t.length > 0)
+        .slice(0, 10);
+
+      await createPost({
+        songName: postSongName.trim(),
+        bpm: 120,
+        duration: 0,
+        trackCount: 1,
+        s3Key: presign.key,
+        description: postDescription.trim() || undefined,
+        hashtags: tags.length > 0 ? tags : undefined,
+      });
+
+      // 5. Refresh posts
+      if (userId) {
+        const postsData = await getUserPosts(userId);
+        setPosts(postsData.posts);
+      }
+
+      // Reset form
+      setShowPostForm(false);
+      setSelectedFile(null);
+      setPostSongName("");
+      setPostDescription("");
+      setPostHashtags("");
+      setUploadProgress("");
+    } catch (err: any) {
+      setUploadError(err.message || "Failed to post");
+    } finally {
+      setUploading(false);
+    }
+  }, [selectedFile, postSongName, postDescription, userId]);
 
   if (loading) {
     return (
@@ -111,15 +238,46 @@ export default function UserProfile() {
           </div>
 
           {/* Info */}
-          <div style={styles.nameRow}>
-            <h1 style={styles.displayName}>
-              {user.displayName}
-              {user.isPro && <span style={styles.proBadge}>PRO</span>}
-            </h1>
-            <span style={styles.username}>@{user.username}</span>
-          </div>
-
-          {user.bio && <p style={styles.bio}>{user.bio}</p>}
+          {editing ? (
+            <div style={{ textAlign: "left" as const, marginBottom: 16 }}>
+              <label style={styles.editLabel}>Display Name</label>
+              <input
+                type="text"
+                value={editDisplayName}
+                onChange={(e) => setEditDisplayName(e.target.value)}
+                maxLength={50}
+                style={styles.editInput}
+              />
+              <label style={{ ...styles.editLabel, marginTop: 12 }}>Bio</label>
+              <textarea
+                value={editBio}
+                onChange={(e) => setEditBio(e.target.value)}
+                maxLength={150}
+                rows={3}
+                placeholder="Tell people about yourself..."
+                style={{ ...styles.editInput, resize: "vertical" as const }}
+              />
+              <div style={{ fontSize: "0.72rem", color: "var(--text-subtle)", textAlign: "right" as const }}>{editBio.length}/150</div>
+              {editError && <p style={{ color: "var(--accent-red)", fontSize: "0.82rem", margin: "8px 0 0" }}>{editError}</p>}
+              <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
+                <button onClick={saveProfile} disabled={saving} style={styles.saveBtn}>
+                  {saving ? "Saving..." : "Save"}
+                </button>
+                <button onClick={() => setEditing(false)} style={styles.cancelBtn}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={styles.nameRow}>
+                <h1 style={styles.displayName}>
+                  {user.displayName}
+                  {user.isPro && <span style={styles.proBadge}>PRO</span>}
+                </h1>
+                <span style={styles.username}>@{user.username}</span>
+              </div>
+              {user.bio && <p style={styles.bio}>{user.bio}</p>}
+            </>
+          )}
 
           {/* Stats */}
           <div style={styles.statsRow}>
@@ -141,26 +299,99 @@ export default function UserProfile() {
             </div>
           </div>
 
-          {/* Follow button */}
-          {isLoggedIn() && (
-            <button
-              onClick={handleFollow}
-              style={{
-                ...styles.followBtn,
-                ...(isFollowing ? styles.followBtnFollowing : {}),
-              }}
-            >
-              {isFollowing ? "Following" : "Follow"}
-            </button>
+          {/* Action buttons */}
+          {isOwnProfile ? (
+            !editing && (
+              <button onClick={startEditing} style={styles.editBtn}>
+                Edit Profile
+              </button>
+            )
+          ) : (
+            isLoggedIn() && (
+              <button
+                onClick={handleFollow}
+                style={{
+                  ...styles.followBtn,
+                  ...(isFollowing ? styles.followBtnFollowing : {}),
+                }}
+              >
+                {isFollowing ? "Following" : "Follow"}
+              </button>
+            )
           )}
         </div>
 
         {/* Posts */}
         <div style={styles.postsSection}>
-          <h3 style={styles.postsTitle}>
-            <StripeAccent style={{ width: 40, marginRight: 8 }} />
-            Posts ({posts.length})
-          </h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <h3 style={{ ...styles.postsTitle, marginBottom: 0 }}>
+              <StripeAccent style={{ width: 40, marginRight: 8 }} />
+              Posts ({posts.length})
+            </h3>
+            {isOwnProfile && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                style={styles.postBtn}
+              >
+                + Post
+              </button>
+            )}
+          </div>
+
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".looper"
+            onChange={handleFileSelect}
+            style={{ display: "none" }}
+          />
+
+          {/* Post form */}
+          {showPostForm && (
+            <div style={styles.postForm}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <span style={styles.fileIcon}>♫</span>
+                <span style={{ fontSize: "0.85rem", color: "var(--text)" }}>{selectedFile?.name}</span>
+              </div>
+              <label style={styles.editLabel}>Song Name</label>
+              <input
+                type="text"
+                value={postSongName}
+                onChange={(e) => setPostSongName(e.target.value)}
+                maxLength={200}
+                style={styles.editInput}
+              />
+              <label style={{ ...styles.editLabel, marginTop: 12 }}>Description (optional)</label>
+              <textarea
+                value={postDescription}
+                onChange={(e) => setPostDescription(e.target.value)}
+                maxLength={500}
+                rows={2}
+                placeholder="Say something about your loop..."
+                style={{ ...styles.editInput, resize: "vertical" as const }}
+              />
+              <label style={{ ...styles.editLabel, marginTop: 12 }}>Hashtags (optional)</label>
+              <input
+                type="text"
+                value={postHashtags}
+                onChange={(e) => setPostHashtags(e.target.value)}
+                placeholder="lofi, chill, guitar (comma separated)"
+                style={styles.editInput}
+              />
+              <p style={{ fontSize: "0.7rem", color: "var(--text-subtle)", margin: "4px 0 0" }}>Up to 10 tags, comma or space separated</p>
+              {uploadError && <p style={{ color: "var(--accent-red)", fontSize: "0.82rem", margin: "8px 0 0" }}>{uploadError}</p>}
+              {uploadProgress && <p style={{ color: "var(--text-subtle)", fontSize: "0.82rem", margin: "8px 0 0" }}>{uploadProgress}</p>}
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button onClick={handlePost} disabled={uploading || !postSongName.trim()} style={styles.saveBtn}>
+                  {uploading ? "Posting..." : "Post"}
+                </button>
+                <button onClick={() => { setShowPostForm(false); setSelectedFile(null); }} style={styles.cancelBtn}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {posts.length === 0 ? (
             <p style={styles.noPosts}>No posts yet</p>
@@ -235,10 +466,51 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: 700,
     color: "var(--text)", marginBottom: 16, display: "flex", alignItems: "center",
   },
+  postBtn: {
+    padding: "8px 18px", borderRadius: 8, border: "none",
+    backgroundColor: "var(--accent-red)", color: "#fff", fontWeight: 600,
+    fontSize: "0.82rem", cursor: "pointer", fontFamily: "var(--font-body)",
+    transition: "opacity 0.2s",
+  },
+  postForm: {
+    backgroundColor: "var(--bg-light)", border: "1px solid var(--border)",
+    borderRadius: 12, padding: 20, marginBottom: 20,
+  },
+  fileIcon: {
+    width: 32, height: 32, borderRadius: 8, backgroundColor: "var(--accent-red)",
+    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: "1rem", fontWeight: 700, flexShrink: 0,
+  },
   postsList: {},
   noPosts: {
     color: "var(--text-subtle)", fontSize: "0.9rem",
     textAlign: "center" as const, padding: "32px 0",
+  },
+  editBtn: {
+    marginTop: 20, padding: "10px 32px", borderRadius: 10,
+    border: "1px solid var(--border)", backgroundColor: "transparent",
+    color: "var(--text)", fontWeight: 600, fontSize: "0.9rem", cursor: "pointer",
+    transition: "all 0.2s ease", fontFamily: "var(--font-body)",
+  },
+  editLabel: {
+    display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-subtle)",
+    marginBottom: 4, textAlign: "left" as const,
+  },
+  editInput: {
+    width: "100%", padding: "10px 12px", borderRadius: 8,
+    border: "1px solid var(--border)", backgroundColor: "var(--surface)",
+    color: "var(--text)", fontSize: "0.88rem", fontFamily: "var(--font-body)",
+    outline: "none", boxSizing: "border-box" as const,
+  },
+  saveBtn: {
+    padding: "8px 24px", borderRadius: 8, border: "none",
+    backgroundColor: "var(--accent-red)", color: "#fff", fontWeight: 600,
+    fontSize: "0.85rem", cursor: "pointer", fontFamily: "var(--font-body)",
+  },
+  cancelBtn: {
+    padding: "8px 24px", borderRadius: 8, border: "1px solid var(--border)",
+    backgroundColor: "transparent", color: "var(--text-subtle)", fontWeight: 600,
+    fontSize: "0.85rem", cursor: "pointer", fontFamily: "var(--font-body)",
   },
   loadingContainer: { textAlign: "center" as const, padding: "100px 0" },
   spinner: {

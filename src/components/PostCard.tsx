@@ -5,7 +5,7 @@
 import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import type { FeedPost } from "../services/api";
-import { toggleLike, incrementPlays, isLoggedIn } from "../services/api";
+import { toggleLike, toggleRepost, toggleBookmark, deletePost, incrementPlays, isLoggedIn, getCurrentUserId } from "../services/api";
 import { playPreview, stopPreview, isPreviewPlaying } from "../services/audioPlayer";
 
 function formatCount(n: number): string {
@@ -36,14 +36,21 @@ function timeAgo(timestamp: number): string {
 interface PostCardProps {
   post: FeedPost;
   onPlayStateChange?: () => void;
+  onDeleted?: (postId: string) => void;
 }
 
-export default function PostCard({ post, onPlayStateChange }: PostCardProps) {
+export default function PostCard({ post, onPlayStateChange, onDeleted }: PostCardProps) {
   const [isLiked, setIsLiked] = useState(post.isLiked ?? false);
   const [likeCount, setLikeCount] = useState(post.likes);
+  const [isReposted, setIsReposted] = useState(post.isReposted ?? false);
+  const [repostCount, setRepostCount] = useState(post.reposts ?? 0);
+  const [isBookmarked, setIsBookmarked] = useState(post.isBookmarked ?? false);
   const [playCount, setPlayCount] = useState(post.plays);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [deleted, setDeleted] = useState(false);
+  const isOwnPost = getCurrentUserId() === post.authorId;
 
   const handlePlay = useCallback(async () => {
     if (isLoading) return;
@@ -86,6 +93,57 @@ export default function PostCard({ post, onPlayStateChange }: PostCardProps) {
     }
   }, [post.postId, isLiked]);
 
+  const handleRepost = useCallback(async () => {
+    if (!isLoggedIn() || isOwnPost) return;
+    const prev = isReposted;
+    setIsReposted(!prev);
+    setRepostCount((c) => c + (prev ? -1 : 1));
+    try {
+      const result = await toggleRepost(post.postId);
+      setIsReposted(result.reposted);
+      setRepostCount(result.repostCount);
+    } catch {
+      setIsReposted(prev);
+      setRepostCount((c) => c + (prev ? 1 : -1));
+    }
+  }, [post.postId, isReposted, isOwnPost]);
+
+  const handleBookmark = useCallback(async () => {
+    if (!isLoggedIn()) return;
+    const prev = isBookmarked;
+    setIsBookmarked(!prev);
+    try {
+      const result = await toggleBookmark(post.postId);
+      setIsBookmarked(result.bookmarked);
+    } catch {
+      setIsBookmarked(prev);
+    }
+  }, [post.postId, isBookmarked]);
+
+  const handleDelete = useCallback(async () => {
+    if (!confirm("Delete this post? This cannot be undone.")) return;
+    try {
+      await deletePost(post.postId);
+      setDeleted(true);
+      onDeleted?.(post.postId);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setShowMenu(false);
+  }, [post.postId, onDeleted]);
+
+  const handleShare = useCallback(() => {
+    const url = `${window.location.origin}/looper/post/${post.postId}`;
+    if (navigator.share) {
+      navigator.share({ title: post.songName, url }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(url).then(() => alert("Link copied!")).catch(() => {});
+    }
+    setShowMenu(false);
+  }, [post.postId, post.songName]);
+
+  if (deleted) return null;
+
   return (
     <div style={styles.card} className="card-hover">
       {/* Repost banner */}
@@ -122,6 +180,22 @@ export default function PostCard({ post, onPlayStateChange }: PostCardProps) {
           <span style={styles.authorMeta}>
             @{post.authorUsername} · {timeAgo(post.createdAt)}
           </span>
+        </div>
+        <div style={{ position: "relative", marginLeft: "auto" }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+            style={styles.menuBtn}
+          >
+            ···
+          </button>
+          {showMenu && (
+            <div style={styles.postMenu} onClick={(e) => e.stopPropagation()}>
+              <button onClick={handleShare} style={styles.menuItem}>Share</button>
+              {isOwnPost && (
+                <button onClick={handleDelete} style={{ ...styles.menuItem, color: "var(--accent-red)" }}>Delete</button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -186,20 +260,30 @@ export default function PostCard({ post, onPlayStateChange }: PostCardProps) {
 
       {/* Action bar */}
       <div style={styles.actionBar}>
-        <button onClick={handleLike} style={styles.actionBtn}>
+        <button onClick={handleLike} style={styles.actionBtn} title="Like">
           <span style={{ color: isLiked ? "var(--accent-red)" : "var(--text-muted)" }}>
             {isLiked ? "♥" : "♡"}
           </span>
           <span style={styles.actionCount}>{formatCount(likeCount)}</span>
         </button>
-        <Link to={`/looper/post/${post.postId}`} style={styles.actionBtn}>
+        <Link to={`/looper/post/${post.postId}`} style={styles.actionBtn} title="Comments">
           <span style={{ color: "var(--text-muted)" }}>💬</span>
           <span style={styles.actionCount}>{formatCount(post.comments)}</span>
         </Link>
-        <span style={styles.actionBtn}>
-          <span style={{ color: "var(--text-muted)" }}>⭯</span>
-          <span style={styles.actionCount}>{formatCount(post.remixes)}</span>
-        </span>
+        <button
+          onClick={handleRepost}
+          style={{ ...styles.actionBtn, opacity: isOwnPost ? 0.4 : 1 }}
+          title={isOwnPost ? "Can't repost your own" : isReposted ? "Undo repost" : "Repost"}
+          disabled={isOwnPost}
+        >
+          <span style={{ color: isReposted ? "var(--accent-green)" : "var(--text-muted)" }}>⟳</span>
+          <span style={styles.actionCount}>{formatCount(repostCount)}</span>
+        </button>
+        <button onClick={handleBookmark} style={styles.actionBtn} title={isBookmarked ? "Remove bookmark" : "Bookmark"}>
+          <span style={{ color: isBookmarked ? "var(--accent-yellow)" : "var(--text-muted)" }}>
+            {isBookmarked ? "★" : "☆"}
+          </span>
+        </button>
         <span style={{ ...styles.actionBtn, marginLeft: "auto" }}>
           <span style={{ color: "var(--text-muted)" }}>▶</span>
           <span style={styles.actionCount}>{formatCount(playCount)}</span>
@@ -391,5 +475,22 @@ const styles: Record<string, React.CSSProperties> = {
   actionCount: {
     color: "var(--text-muted)",
     fontSize: "0.8rem",
+  },
+  menuBtn: {
+    background: "none", border: "none", color: "var(--text-muted)",
+    fontSize: "1.2rem", cursor: "pointer", padding: "2px 6px",
+    letterSpacing: 2, lineHeight: 1,
+  },
+  postMenu: {
+    position: "absolute" as const, top: "calc(100% + 4px)", right: 0,
+    backgroundColor: "var(--bg-light)", border: "1px solid var(--border)",
+    borderRadius: 8, padding: "4px 0", minWidth: 120, zIndex: 50,
+    boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+  },
+  menuItem: {
+    display: "block", width: "100%", textAlign: "left" as const,
+    background: "none", border: "none", padding: "8px 14px",
+    fontSize: "0.82rem", color: "var(--text)", cursor: "pointer",
+    fontFamily: "var(--font-body)",
   },
 };

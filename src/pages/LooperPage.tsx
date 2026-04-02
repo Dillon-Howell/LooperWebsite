@@ -180,6 +180,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     letterSpacing: '-0.03em',
     marginBottom: 16,
+    color: 'var(--text)',
   },
   tagline: {
     fontFamily: 'var(--font-display)',
@@ -219,6 +220,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     marginBottom: 48,
     letterSpacing: '-0.02em',
+    color: 'var(--text)',
   },
   featuresGrid: {
     display: 'grid',
@@ -242,6 +244,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '1.15rem',
     fontWeight: 700,
     marginBottom: 8,
+    color: 'var(--text)',
   },
   featureDesc: {
     color: 'var(--text-muted)',
@@ -272,6 +275,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '1.25rem',
     fontWeight: 700,
     marginBottom: 8,
+    color: 'var(--text)',
   },
   stepDesc: {
     color: 'var(--text-muted)',

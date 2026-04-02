@@ -8,25 +8,210 @@ const API_BASE = "https://l9i0ppdygd.execute-api.us-west-1.amazonaws.com";
 // ── Token management ─────────────────────────────────────────────────
 
 let accessToken: string | null = null;
+let refreshToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
-  if (token) {
-    localStorage.setItem("looper_token", token);
-  } else {
-    localStorage.removeItem("looper_token");
-  }
+  if (token) localStorage.setItem("looper_token", token);
+  else localStorage.removeItem("looper_token");
 }
 
 export function getAccessToken(): string | null {
-  if (!accessToken) {
-    accessToken = localStorage.getItem("looper_token");
-  }
+  if (!accessToken) accessToken = localStorage.getItem("looper_token");
   return accessToken;
+}
+
+export function setRefreshToken(token: string | null) {
+  refreshToken = token;
+  if (token) localStorage.setItem("looper_refresh_token", token);
+  else localStorage.removeItem("looper_refresh_token");
+}
+
+function getRefreshToken(): string | null {
+  if (!refreshToken) refreshToken = localStorage.getItem("looper_refresh_token");
+  return refreshToken;
 }
 
 export function isLoggedIn(): boolean {
   return !!getAccessToken();
+}
+
+let _currentUserId: string | null = null;
+
+export function setCurrentUserId(id: string | null) {
+  _currentUserId = id;
+  if (id) localStorage.setItem("looper_user_id", id);
+  else localStorage.removeItem("looper_user_id");
+}
+
+export function getCurrentUserId(): string | null {
+  if (!_currentUserId) _currentUserId = localStorage.getItem("looper_user_id");
+  return _currentUserId;
+}
+
+export function logout() {
+  setAccessToken(null);
+  setRefreshToken(null);
+  setCurrentUserId(null);
+  localStorage.removeItem("looper_id_token");
+}
+
+/** Try to refresh the access token using the stored refresh token */
+async function tryRefreshToken(): Promise<boolean> {
+  const rt = getRefreshToken();
+  if (!rt) return false;
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: rt }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    setAccessToken(data.accessToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Social Auth ─────────────────────────────────────────────────────
+
+export interface AuthResult {
+  accessToken: string;
+  idToken: string;
+  refreshToken: string;
+  userId: string;
+  email: string;
+  isNewUser?: boolean;
+}
+
+export async function socialAuth(
+  provider: "apple" | "google",
+  identityToken: string,
+  fullName?: string,
+  client?: "web" | "app"
+): Promise<AuthResult> {
+  const body: Record<string, unknown> = { provider, identityToken, client: client ?? "web" };
+  if (fullName) body.fullName = fullName;
+  const res = await fetch(`${API_BASE}/auth/social`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Social auth failed (${res.status})`);
+  const data: AuthResult = await res.json();
+  setAccessToken(data.accessToken);
+  setRefreshToken(data.refreshToken);
+  setCurrentUserId(data.userId);
+  // Store idToken for potential auth code generation (app redirect flow)
+  if (data.idToken) localStorage.setItem("looper_id_token", data.idToken);
+  return data;
+}
+
+/**
+ * Generate a short-lived auth code for the mobile app.
+ * Called after web sign-in when the app initiated the flow via redirect_uri.
+ */
+export async function generateAuthCode(): Promise<string> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${API_BASE}/auth/code`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      accessToken: getAccessToken(),
+      idToken: localStorage.getItem("looper_id_token") || "",
+      refreshToken: getRefreshToken(),
+      email: localStorage.getItem("looper_user_email") || "",
+    }),
+  });
+  if (!res.ok) throw new Error(`Auth code generation failed (${res.status})`);
+  const data = await res.json();
+  return data.code;
+}
+
+// ── Email Auth (Cognito direct) ──────────────────────────────────────
+
+const COGNITO_ENDPOINT = "https://cognito-idp.us-west-1.amazonaws.com/";
+const COGNITO_CLIENT_ID = "4lp7h9mh5oqv4ud5a15l1p51vl";
+
+async function cognitoRequest(target: string, body: Record<string, unknown>) {
+  const res = await fetch(COGNITO_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-amz-json-1.1",
+      "X-Amz-Target": `AWSCognitoIdentityProviderService.${target}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (data.__type) {
+    throw new Error(data.message || data.__type);
+  }
+  return data;
+}
+
+export async function emailSignIn(email: string, password: string): Promise<AuthResult & { isNewUser: boolean }> {
+  const data = await cognitoRequest("InitiateAuth", {
+    AuthFlow: "USER_PASSWORD_AUTH",
+    ClientId: COGNITO_CLIENT_ID,
+    AuthParameters: { USERNAME: email, PASSWORD: password },
+  });
+  if (!data.AuthenticationResult) throw new Error("Unexpected auth response");
+  const { IdToken, AccessToken, RefreshToken } = data.AuthenticationResult;
+  // Decode the userId from the ID token
+  const payload = JSON.parse(atob(IdToken.split(".")[1]));
+  setAccessToken(AccessToken);
+  setRefreshToken(RefreshToken);
+  setCurrentUserId(payload.sub);
+  localStorage.setItem("looper_id_token", IdToken);
+  localStorage.setItem("looper_user_email", email);
+  return { accessToken: AccessToken, idToken: IdToken, refreshToken: RefreshToken, userId: payload.sub, email, isNewUser: false };
+}
+
+export async function emailSignUp(email: string, password: string): Promise<{ needsConfirmation: boolean }> {
+  const data = await cognitoRequest("SignUp", {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: email,
+    Password: password,
+    UserAttributes: [{ Name: "email", Value: email }],
+  });
+  return { needsConfirmation: !data.UserConfirmed };
+}
+
+export async function confirmEmail(email: string, code: string): Promise<void> {
+  await cognitoRequest("ConfirmSignUp", {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: email,
+    ConfirmationCode: code,
+  });
+}
+
+export async function resendConfirmation(email: string): Promise<void> {
+  await cognitoRequest("ResendConfirmationCode", {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: email,
+  });
+}
+
+export async function forgotPassword(email: string): Promise<void> {
+  await cognitoRequest("ForgotPassword", {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: email,
+  });
+}
+
+export async function confirmForgotPassword(email: string, code: string, newPassword: string): Promise<void> {
+  await cognitoRequest("ConfirmForgotPassword", {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: email,
+    ConfirmationCode: code,
+    Password: newPassword,
+  });
 }
 
 // ── Fetch helper ─────────────────────────────────────────────────────
@@ -39,7 +224,18 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  return fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  // Auto-refresh on 401 and retry once
+  if (res.status === 401 && token) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      headers["Authorization"] = `Bearer ${getAccessToken()}`;
+      return fetch(`${API_BASE}${path}`, { ...options, headers });
+    }
+  }
+
+  return res;
 }
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -68,6 +264,7 @@ export interface FeedPost {
   createdAt: number;
   isLiked?: boolean;
   isReposted?: boolean;
+  isBookmarked?: boolean;
   remixOfPostId?: string;
   rootPostId?: string;
   remixDepth?: number;
@@ -120,6 +317,97 @@ export interface RemixChainEntry {
   songName: string;
   remixDepth: number;
   createdAt: number;
+}
+
+// ── Profile Management ──────────────────────────────────────────────
+
+export async function getMyProfile(): Promise<PublicUserProfile> {
+  const userId = getCurrentUserId();
+  if (!userId) throw new Error("Not signed in");
+  return getUserProfile(userId);
+}
+
+export async function setUsername(username: string): Promise<void> {
+  const res = await apiFetch("/users/me/username", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed (${res.status})`);
+  }
+}
+
+export async function updateMyProfile(updates: {
+  displayName?: string;
+  bio?: string;
+  avatarUrl?: string;
+  avatarColor?: string;
+  highlightColor?: string;
+}): Promise<void> {
+  const res = await apiFetch("/users/me", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Failed (${res.status})`);
+  }
+}
+
+// ── Upload & Post ──────────────────────────────────────────────────
+
+export async function presignUpload(fileName: string, fileSizeBytes: number, contentType = "application/octet-stream"): Promise<{
+  uploadUrl: string;
+  key: string;
+  expiresIn: number;
+  remainingBytes: number;
+}> {
+  const res = await apiFetch("/uploads/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileName, fileSizeBytes, contentType }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Presign failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function completeUpload(key: string): Promise<void> {
+  const res = await apiFetch("/uploads/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Complete upload failed (${res.status})`);
+  }
+}
+
+export async function createPost(post: {
+  songName: string;
+  bpm: number;
+  duration: number;
+  trackCount: number;
+  s3Key: string;
+  description?: string;
+  hashtags?: string[];
+}): Promise<{ post: FeedPost }> {
+  const res = await apiFetch("/posts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(post),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Create post failed (${res.status})`);
+  }
+  return res.json();
 }
 
 // ── Feed ─────────────────────────────────────────────────────────────
@@ -287,6 +575,32 @@ export async function toggleRepost(postId: string): Promise<{ reposted: boolean;
   return res.json();
 }
 
+// ── Bookmark ──────────────────────────────────────────────────────────
+
+export async function toggleBookmark(postId: string): Promise<{ bookmarked: boolean }> {
+  const res = await apiFetch(`/posts/${postId}/bookmark`, { method: "POST" });
+  if (!res.ok) throw new Error(`Toggle bookmark failed (${res.status})`);
+  return res.json();
+}
+
+export async function getBookmarks(cursor?: string, limit = 20): Promise<{ posts: FeedPost[]; nextCursor?: string }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  const res = await apiFetch(`/bookmarks?${params}`);
+  if (!res.ok) throw new Error(`Get bookmarks failed (${res.status})`);
+  return res.json();
+}
+
+// ── Post Management ──────────────────────────────────────────────────
+
+export async function deletePost(postId: string): Promise<void> {
+  const res = await apiFetch(`/posts/${postId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Delete failed (${res.status})`);
+  }
+}
+
 // ── Admin Analytics ─────────────────────────────────────────────────
 
 export interface AnalyticsOverview {
@@ -381,5 +695,70 @@ export async function getAnalyticsTopPosts(
 export async function getAnalyticsRetention(): Promise<RetentionData> {
   const res = await apiFetch("/admin/analytics?action=retention");
   if (!res.ok) throw new Error(`Analytics retention failed (${res.status})`);
+  return res.json();
+}
+
+// ── Admin User Management ───────────────────────────────────────────
+
+export interface AdminUser {
+  userId: string;
+  email?: string;
+  username?: string;
+  displayName?: string;
+  avatarColor?: string;
+  avatarUrl?: string;
+  isPro?: boolean;
+  proUntil?: number;
+  createdAt?: number;
+  postCount?: number;
+  followerCount?: number;
+  followingCount?: number;
+  apps?: string[];
+}
+
+export async function getAdminUsers(
+  options: { limit?: number; cursor?: string; search?: string } = {}
+): Promise<{ users: AdminUser[]; nextCursor?: string }> {
+  const params = new URLSearchParams({ action: "users", limit: String(options.limit ?? 25) });
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.search) params.set("search", options.search);
+  const res = await apiFetch(`/admin/analytics?${params}`);
+  if (!res.ok) throw new Error(`Admin users failed (${res.status})`);
+  return res.json();
+}
+
+export async function grantPro(
+  targetUserId: string,
+  _app: string,
+  durationDays: number
+): Promise<void> {
+  const proUntil = Date.now() + durationDays * 86400000;
+  const params = new URLSearchParams({
+    action: "set-user-status",
+    targetUserId,
+    field: "proUntil",
+    value: String(proUntil),
+  });
+  const res = await apiFetch(`/admin/analytics?${params}`);
+  if (!res.ok) throw new Error(`Grant pro failed (${res.status})`);
+}
+
+export async function revokePro(targetUserId: string): Promise<void> {
+  const params = new URLSearchParams({
+    action: "set-user-status",
+    targetUserId,
+    field: "proUntil",
+    value: "0",
+  });
+  const res = await apiFetch(`/admin/analytics?${params}`);
+  if (!res.ok) throw new Error(`Revoke pro failed (${res.status})`);
+}
+
+export async function getAdminUserDetail(
+  targetUserId: string
+): Promise<{ user: AdminUser; recentPosts: FeedPost[] }> {
+  const params = new URLSearchParams({ action: "user-detail", targetUserId });
+  const res = await apiFetch(`/admin/analytics?${params}`);
+  if (!res.ok) throw new Error(`User detail failed (${res.status})`);
   return res.json();
 }

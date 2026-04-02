@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "ZTXVSK3QMK.com.looperstudio.app",
+        "paths": ["/looper/*"]
+      }
+    ]
+  }
+}
