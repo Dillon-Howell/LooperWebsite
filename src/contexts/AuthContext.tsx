@@ -127,7 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       `&redirect_uri=${encodeURIComponent(window.location.origin + "/auth/callback")}` +
       `&response_type=id_token` +
       `&scope=email+profile+openid` +
-      `&nonce=${Math.random().toString(36).slice(2)}` +
+      `&nonce=${Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("")}` +
       `&prompt=select_account`;
     window.open(authUrl, "GoogleSignIn", `width=${width},height=${height},left=${left},top=${top}`);
   }, []);

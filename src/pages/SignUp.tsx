@@ -42,7 +42,7 @@ export default function SignUp() {
         `&redirect_uri=${encodeURIComponent(window.location.origin + "/auth/callback")}` +
         `&response_type=id_token` +
         `&scope=email+profile+openid` +
-        `&nonce=${Math.random().toString(36).slice(2)}` +
+        `&nonce=${Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, "0")).join("")}` +
         `&prompt=select_account`;
       window.location.href = authUrl;
     } else {
@@ -86,6 +86,7 @@ export default function SignUp() {
         const code = await generateAuthCode();
         const uri = sessionStorage.getItem("looper_app_redirect_uri") || "";
         sessionStorage.removeItem("looper_app_redirect_uri");
+        if (!uri.startsWith("looperstudio://")) { navigate("/profile", { replace: true }); return; }
         window.location.href = `${uri}${uri.includes("?") ? "&" : "?"}code=${encodeURIComponent(code)}`;
       } else {
         signInWithEmail(signInResult.userId, signInResult.email);

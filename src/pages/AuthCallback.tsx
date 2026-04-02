@@ -26,7 +26,9 @@ export default function AuthCallback() {
     }
 
     // Check if this is an app redirect flow
-    const appRedirectUri = sessionStorage.getItem("looper_app_redirect_uri");
+    const rawRedirectUri = sessionStorage.getItem("looper_app_redirect_uri");
+    // Only allow our app's custom scheme — block open redirects
+    const appRedirectUri = rawRedirectUri?.startsWith("looperstudio://") ? rawRedirectUri : null;
     const client = appRedirectUri ? "app" : "web";
 
     socialAuth("google", idToken, undefined, client)
