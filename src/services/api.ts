@@ -729,13 +729,14 @@ export async function getAdminUsers(
 
 export async function grantPro(
   targetUserId: string,
-  _app: string,
+  app: string,
   durationDays: number
 ): Promise<void> {
   const proUntil = Date.now() + durationDays * 86400000;
   const params = new URLSearchParams({
     action: "set-user-status",
     targetUserId,
+    app,
     field: "proUntil",
     value: String(proUntil),
   });
@@ -743,10 +744,11 @@ export async function grantPro(
   if (!res.ok) throw new Error(`Grant pro failed (${res.status})`);
 }
 
-export async function revokePro(targetUserId: string): Promise<void> {
+export async function revokePro(targetUserId: string, app: string = "looper"): Promise<void> {
   const params = new URLSearchParams({
     action: "set-user-status",
     targetUserId,
+    app,
     field: "proUntil",
     value: "0",
   });

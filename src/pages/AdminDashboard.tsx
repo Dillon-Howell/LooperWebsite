@@ -459,12 +459,18 @@ export default function AdminDashboard() {
                           <td style={styles.td}>{u.followerCount ?? 0}</td>
                           <td style={styles.td}>
                             <div style={{ display: "flex", gap: 4 }}>
-                              <img src={looperIcon} alt="Looper" style={{ width: 20, height: 20, borderRadius: 4 }} title="Looper Studio" />
+                              {(u.apps && Array.isArray(u.apps) ? u.apps : ["looper"]).map((app: string) => (
+                                app === "looper" ? (
+                                  <img key={app} src={looperIcon} alt="Looper" style={{ width: 20, height: 20, borderRadius: 4 }} title="Looper Studio" />
+                                ) : (
+                                  <span key={app} style={{ fontSize: "0.72rem", color: "var(--text-subtle)", padding: "2px 6px", background: "var(--surface-2)", borderRadius: 4 }}>{app}</span>
+                                )
+                              ))}
                             </div>
                           </td>
                           <td style={styles.td}>
                             {u.isPro || (u.proUntil && u.proUntil > Date.now()) ? (
-                              <span style={styles.badge}>PRO</span>
+                              <span style={styles.badge} title="Looper Studio Pro">PRO</span>
                             ) : (
                               <span style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Free</span>
                             )}
