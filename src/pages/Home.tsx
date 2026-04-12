@@ -9,17 +9,17 @@ const apps = [
   {
     name: 'Looper',
     tagline: 'Layer your sound. Create your music.',
-    description: 'A full-featured guitar looper app for iOS and Android. Record multiple tracks, add effects, and build songs layer by layer — all from your phone.',
+    description: 'A multi-track looper built for real musicians. Record layers, shape your sound with effects, and share your creations — all from your phone.',
     path: '/looper',
     color: 'var(--accent-red)',
-    features: ['Multi-track recording', 'Effects chain', 'Built-in metronome', 'Drum machine'],
+    features: ['Multi-track recording', 'Effects chain', 'Built-in metronome', 'Drum machine', 'Social feed', 'Cloud sync'],
   },
 ];
 
 export default function Home() {
   usePageMeta({
     title: 'ArchaldStudio — Independent Software Studio',
-    description: 'ArchaldStudio builds tools for creators. Home of Looper, the multi-track guitar looper app.',
+    description: 'ArchaldStudio builds tools for creators. Home of Looper, the multi-track looper app for musicians.',
   });
   return (
     <div style={{ position: 'relative' }}>

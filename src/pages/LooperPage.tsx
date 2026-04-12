@@ -6,47 +6,59 @@ import { usePageMeta } from '../hooks/usePageMeta';
 
 const features = [
   {
-    title: 'Multi-Track Recording',
-    description: 'Record up to 8 independent audio layers. Build complex arrangements one track at a time with intuitive controls.',
+    title: 'Multi-Track Looping',
+    description: 'Stack unlimited layers in perfect sync. Record rhythm, melody, bass, vocals — each on its own track. Auto Looper detects your tempo, trims silence, and snaps everything to the beat.',
     icon: '🎵',
     glow: 'card-glow-red',
   },
   {
-    title: 'Effects Chain',
-    description: 'Shape your sound with reverb, delay, distortion, EQ, and chorus. Each effect fully customizable with real-time preview.',
+    title: 'Pro Effects Engine',
+    description: 'Per-track effects chain: EQ, Drive, Reverb, Delay, Chorus, Lo-Fi, and Stutter. Shape each layer independently and hear changes in real time.',
     icon: '🎛️',
     glow: 'card-glow-green',
   },
   {
-    title: 'Built-in Metronome',
-    description: 'Stay in time with a fully configurable metronome. Adjust BPM, time signature, and accent patterns to match your groove.',
+    title: 'Smart Metronome & Tools',
+    description: 'Count-in, Auto BPM detection, practice mode with speed ramp, and time signature control. The metronome adapts to how you play.',
     icon: '⏱️',
     glow: 'card-glow-yellow',
   },
   {
     title: 'Drum Machine',
-    description: 'Create 16-step drum patterns to back your loops. Layer percussion without needing external tools.',
+    description: '16-step sequencer with kick, snare, hi-hat, and percussion. Build beats from scratch to back your loops — no external gear needed.',
     icon: '🥁',
     glow: 'card-glow-red',
   },
   {
-    title: 'Track Controls',
-    description: 'Individual volume, pan, loop mode, and reverse playback for each track. Full control over your mix.',
+    title: 'Track Editor',
+    description: 'Trim, reverse, pitch-shift, speed-change, merge, duplicate, and loop every track. Fade in/out, timeline offsets, and visual waveforms give you studio-level control.',
     icon: '🎚️',
     glow: 'card-glow-green',
   },
   {
-    title: 'Song Library',
-    description: 'Save and organize your sessions. Pick up where you left off with auto-save and session management.',
-    icon: '📚',
+    title: 'Share & Discover',
+    description: 'Post your loops to the community feed. Like, comment, repost, and remix other creators. Follow musicians and build your audience — all inside the app.',
+    icon: '🌐',
     glow: 'card-glow-yellow',
+  },
+  {
+    title: 'Cloud Backup',
+    description: 'Save your songs to the cloud with 1 GB of storage. Access your projects from anywhere and never lose a session.',
+    icon: '☁️',
+    glow: 'card-glow-red',
+  },
+  {
+    title: 'Export Anywhere',
+    description: 'Export as WAV, MP3, or shareable .looper project files. Send your music to a DAW, share with bandmates, or post directly to the feed.',
+    icon: '📤',
+    glow: 'card-glow-green',
   },
 ];
 
 export default function LooperPage() {
   usePageMeta({
-    title: 'Looper — ArchaldStudio',
-    description: 'Looper is a full-featured guitar looper app for iOS and Android. Record multiple tracks, add effects, and build songs layer by layer.',
+    title: 'Looper Studio — ArchaldStudio',
+    description: 'Looper Studio is a professional multi-track looper for musicians. Record layers, add effects, share with the community, and build full songs — all from your phone.',
   });
   return (
     <div>
@@ -71,20 +83,28 @@ export default function LooperPage() {
             </ScrollReveal>
             <ScrollReveal direction="up" delay={300} duration={800}>
               <p style={styles.tagline}>
-                Layer your sound. Create your music.
+                Layer your sound. Share your music.
               </p>
             </ScrollReveal>
             <ScrollReveal direction="up" delay={450} duration={800}>
               <p style={styles.description}>
-                Looper is a professional-grade guitar looping app for iOS and Android. Record, layer,
-                and sculpt multi-track arrangements — all from your phone. Whether you're jamming alone
-                or building full compositions, Looper gives you the tools to capture every idea.
+                A multi-track looper built for real musicians. Record layers, stack effects,
+                and build full arrangements — right from your phone. Auto Looper handles
+                tempo detection and beat-snapping so you stay in the pocket. Share your loops
+                with a built-in community of creators, or export to your DAW.
               </p>
             </ScrollReveal>
             <ScrollReveal direction="up" delay={600} duration={800}>
               <div style={styles.badges}>
-                <span style={styles.badge}>iOS</span>
-                <span style={styles.badge}>Android</span>
+                <a
+                  href="https://apps.apple.com/app/looper-studio/id6742196498"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...styles.badge, ...styles.badgeLink }}
+                >
+                  App Store
+                </a>
+                <span style={styles.badge}>Google Play (Coming Soon)</span>
                 <span style={styles.badge}>Free to Start</span>
               </div>
             </ScrollReveal>
@@ -122,10 +142,10 @@ export default function LooperPage() {
           </ScrollReveal>
           <div style={styles.steps}>
             {[
-              { step: '01', title: 'Record', desc: 'Tap record and play your first layer. Looper captures high-quality audio directly from your microphone.' },
-              { step: '02', title: 'Layer', desc: 'Add more tracks on top. Each layer plays in sync, building your arrangement piece by piece.' },
-              { step: '03', title: 'Shape', desc: 'Apply effects, adjust volume and panning, toggle loop modes — fine-tune every detail of your mix.' },
-              { step: '04', title: 'Save', desc: 'Save your session to your library. Come back anytime to continue building or share your creation.' },
+              { step: '01', title: 'Plug In & Record', desc: 'Connect your guitar, mic, or keyboard. Tap record with a count-in and Auto Looper handles the rest — tempo, trimming, and loop points.' },
+              { step: '02', title: 'Stack Layers', desc: 'Add rhythm, melody, bass, vocals — each on its own track. Everything stays locked in sync. Merge tracks together or duplicate to experiment.' },
+              { step: '03', title: 'Shape Your Sound', desc: 'Add drive, reverb, delay, chorus, and more to each track. Trim, reverse, pitch-shift, and fine-tune the mix until it feels right.' },
+              { step: '04', title: 'Share or Export', desc: 'Post to the Looper community feed, export as WAV or MP3, or save a .looper project to pick up later on any device.' },
             ].map((s, i) => (
               <ScrollReveal key={s.step} direction="up" delay={i * 150}>
                 <div style={styles.stepCard}>
@@ -145,14 +165,27 @@ export default function LooperPage() {
           <ScrollReveal direction="scale">
             <h2 style={{ ...styles.sectionTitle, marginBottom: 16 }}>Ready to loop?</h2>
             <p style={{ color: 'var(--text-muted)', marginBottom: 32, fontSize: '1.05rem', fontWeight: 300 }}>
-              Available on iOS and Android. Download Looper and start creating today.
+              Free to download. Start recording loops in under a minute.
             </p>
             <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' as const }}>
-              <Link to="/support" className="btn-primary">
-                Get Support
+              <a
+                href="https://apps.apple.com/app/looper-studio/id6742196498"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary"
+              >
+                Download on the App Store
+              </a>
+              <Link to="/looper/community" className="btn-secondary">
+                Browse the Community
               </Link>
-              <Link to="/looper/help" className="btn-secondary">
+            </div>
+            <div style={{ marginTop: 16, display: 'flex', gap: 16, justifyContent: 'center' }}>
+              <Link to="/looper/help" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                 Help & FAQ
+              </Link>
+              <Link to="/support" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                Support
               </Link>
             </div>
           </ScrollReveal>
@@ -210,6 +243,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     color: 'var(--text-muted)',
     transition: 'border-color 0.2s',
+    textDecoration: 'none',
+  },
+  badgeLink: {
+    borderColor: 'var(--accent-red)',
+    color: 'var(--accent-red)',
+    cursor: 'pointer',
   },
   section: {
     padding: '100px 0',

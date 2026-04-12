@@ -54,7 +54,7 @@ export default function Privacy() {
           <p style={styles.text}>Our apps may use the following third-party services:</p>
           <ul style={styles.list}>
             <li><strong>Sentry:</strong> For error tracking and crash reporting</li>
-            <li><strong>RevenueCat:</strong> For subscription and purchase management</li>
+            <li><strong>Apple StoreKit / Google Play Billing:</strong> For subscription and purchase management (processed directly through the platform stores)</li>
             <li><strong>Apple App Store / Google Play Store:</strong> For app distribution and payment processing</li>
           </ul>
           <p style={styles.text}>
